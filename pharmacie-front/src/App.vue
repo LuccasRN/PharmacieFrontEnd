@@ -1,22 +1,32 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue';
-import axios from 'axios';
+import api from './services/apiService'; 
+
 import MedicamentItem from './components/MedicamentItem.vue';
 import MedicamentFormulaire from './components/MedicamentFormulaire.vue';
 import SplashScreen from './components/SplashScreen.vue';
 import ArchivesDialog from './components/ArchivesDialog.vue';
 import SocialSignature from './components/SocialSignature.vue';
+import BarreDeFiltres from './components/BarreDeFiltres.vue';
 
-const API_URL = 'https://pharmaciebackend.onrender.com/api';
+import { useNotifications } from './composables/useNotifications';
+import { useMedicaments } from './composables/useMedicaments';
 
-const medicaments = ref([]);
+const { snackbar, afficherNotification } = useNotifications();
+
+const { 
+  medicaments, chargement, chargerPharmacie, 
+  modifierStock, archiverMedicament, restaurerMedicament, enregistrerMedicament 
+} = useMedicaments(afficherNotification);
+
 const recherche = ref('');
-const chargement = ref(false);
 const dialogueOuvert = ref(false);
 const medicamentAEditer = ref(null);
 const dialogueArchivesOuvert = ref(false);
+
 const chargementInitial = ref(true); 
 const progression = ref(0);
+
 const ordreTri = ref('plus-recent'); 
 const optionsDeTri = [
   { titre: 'Plus récent (défaut)', valeur: 'plus-recent' },
@@ -26,112 +36,26 @@ const optionsDeTri = [
   { titre: 'Stock (Croissant)', valeur: 'stock-asc' },
   { titre: 'Stock (Décroissant)', valeur: 'stock-desc' }
 ];
-const snackbar = ref({ visible: false, message: '', couleur: '' });
 
-const chargerPharmacie = async (estPremierChargement = false) => {
-  if (estPremierChargement) {
-    chargementInitial.value = true;
-    progression.value = 0;
-    
-    const intervalle = setInterval(() => {
-      if (progression.value < 85) progression.value += 15;
-    }, 200);
+const initialiserApp = async () => {
+  chargementInitial.value = true;
+  progression.value = 0;
+  
+  const intervalle = setInterval(() => {
+    if (progression.value < 85) progression.value += 15;
+  }, 200);
 
-    try {
-      const reponse = await axios.get(`${API_URL}/medicaments?size=200`);
-      if (reponse.data._embedded && reponse.data._embedded.medicaments) {
-        medicaments.value = reponse.data._embedded.medicaments;
-      }
-      progression.value = 100;
-      clearInterval(intervalle);
-      
-      setTimeout(() => {
-        chargementInitial.value = false;
-      }, 600);
-      
-    } catch (erreur) {
-      console.error("Erreur lors du chargement :", erreur);
-      afficherNotification("Erreur de connexion à la base de données", "error");
-      clearInterval(intervalle);
-    }
-  } else {
-    chargement.value = true;
-    try {
-      const reponse = await axios.get(`${API_URL}/medicaments?size=200`);
-      if (reponse.data._embedded && reponse.data._embedded.medicaments) {
-        medicaments.value = reponse.data._embedded.medicaments;
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      chargement.value = false;
-    }
-  }
-};
-
-const modifierStock = async (med, delta) => {
-  const nouvelleQte = med.unitesEnStock + delta;
-  if (nouvelleQte < 0) return;
-
-  const qteOriginale = med.unitesEnStock;
-  med.unitesEnStock = nouvelleQte;
-
-  try {
-    await axios.patch(med._links.self.href, { 
-      unitesEnStock: nouvelleQte 
-    });
-    await chargerPharmacie(); 
-  } catch (e) {
-    med.unitesEnStock = qteOriginale;
-    afficherNotification("Erreur serveur", "error");
-  }
-};
-
-const supprimerMedicament = async (med) => {
-  if (confirm("Voulez-vous archiver (désactiver) ce médicament ?")) {
-    try {
-      await axios.patch(med._links.self.href, { indisponible: true });
-      afficherNotification("Médicament archivé avec succès", "info");
-      await chargerPharmacie();
-    } catch (e) {
-      afficherNotification("Erreur lors de l'archivage", "error");
-    }
-  }
-};
-
-const enregistrerMedicament = async (donnees) => {
-  try {
-    const { _links, reference, ...donneesPropres } = donnees;
-
-    const medicamentAEnvoyer = {
-      ...donneesPropres,
-      categorie: donnees.categorie?._links?.self?.href || donnees.categorie
-    };
-
-    console.log("Envoi des données au serveur :", medicamentAEnvoyer);
-
-    if (medicamentAEditer.value) {
-      const urlEdition = medicamentAEditer.value._links.self.href;
-      await axios.put(urlEdition, medicamentAEnvoyer);
-      afficherNotification("Médicament mis à jour", "success");
-    } else {
-      await axios.post(`${API_URL}/medicaments`, medicamentAEnvoyer);
-      afficherNotification("Médicament ajouté", "success");
-    }
-
-    dialogueOuvert.value = false;
-    await chargerPharmacie(); 
-  } catch (e) {
-    console.error("Détail de l'erreur 400 :", e.response?.data);
-    const messageErreur = e.response?.data?.message || "Erreur de validation (400)";
-    afficherNotification(messageErreur, "error");
-  }
+  await chargerPharmacie();
+  
+  progression.value = 100;
+  clearInterval(intervalle);
+  setTimeout(() => { chargementInitial.value = false; }, 600);
 };
 
 const declencherApprovisionnement = async () => {
   try {
     afficherNotification("Traitement de l'approvisionnement...", "warning");
-    await axios.post(`${API_URL}/approvisionnement/declencher`);
+    await api.declencherApprovisionnement();
     afficherNotification("Emails envoyés aux fournisseurs !", "success");
   } catch (e) {
     afficherNotification("Échec du service d'approvisionnement", "error");
@@ -143,18 +67,10 @@ const ouvrirFormulaire = (med = null) => {
   dialogueOuvert.value = true;
 };
 
-const afficherNotification = (msg, col) => {
-  snackbar.value = { visible: true, message: msg, couleur: col };
-};
-
-const restaurerMedicament = async (med) => {
-  try {
-    await axios.patch(med._links.self.href, { indisponible: false });
-    afficherNotification("Médicament restauré avec succès", "success");
-    await chargerPharmacie();
-  } catch (e) {
-    afficherNotification("Erreur lors de la restauration", "error");
-  }
+const gererSauvegarde = (donnees) => {
+  enregistrerMedicament(donnees, medicamentAEditer.value, () => {
+    dialogueOuvert.value = false;
+  });
 };
 
 const medicamentsFiltres = computed(() => {
@@ -164,33 +80,18 @@ const medicamentsFiltres = computed(() => {
   
   let listeFiltree = medicaments.value.filter(m => {
     const nomProduit = m.nom ? m.nom.toLowerCase() : "";
-    const correspondTexte = nomProduit.includes(termeRecherche);
-    const correspondStatut = !m.indisponible;
-    return correspondTexte && correspondStatut;
+    return nomProduit.includes(termeRecherche) && !m.indisponible;
   });
 
   return listeFiltree.sort((a, b) => {
     switch (ordreTri.value) {
-      case 'plus-recent':
-        return b.reference - a.reference; 
-        
-      case 'plus-ancien':
-        return a.reference - b.reference;
-        
-      case 'alpha-asc':
-        return (a.nom || "").localeCompare(b.nom || "", 'fr');
-        
-      case 'alpha-desc':
-        return (b.nom || "").localeCompare(a.nom || "", 'fr');
-        
-      case 'stock-asc':
-        return a.unitesEnStock - b.unitesEnStock;
-        
-      case 'stock-desc':
-        return b.unitesEnStock - a.unitesEnStock;
-        
-      default:
-        return 0;
+      case 'plus-recent': return b.reference - a.reference; 
+      case 'plus-ancien': return a.reference - b.reference;
+      case 'alpha-asc': return (a.nom || "").localeCompare(b.nom || "", 'fr');
+      case 'alpha-desc': return (b.nom || "").localeCompare(a.nom || "", 'fr');
+      case 'stock-asc': return a.unitesEnStock - b.unitesEnStock;
+      case 'stock-desc': return b.unitesEnStock - a.unitesEnStock;
+      default: return 0;
     }
   });
 });
@@ -200,11 +101,7 @@ const medicamentsArchives = computed(() => {
   return medicaments.value.filter(m => m.indisponible === true);
 });
 
-
-
-onMounted(() => {
-  chargerPharmacie(true);
-});
+onMounted(initialiserApp);
 </script>
 
 <template>
@@ -224,19 +121,13 @@ onMounted(() => {
 
       <v-main class="bg-grey-lighten-4">
         <v-container>
-          <v-row class="mt-2 mb-4" align="center">
-            <v-col cols="12" md="5" lg="6">
-              <v-text-field v-model="recherche" label="Rechercher un médicament..." prepend-inner-icon="mdi-magnify" variant="solo" hide-details clearable rounded="lg"></v-text-field>
-            </v-col>
-            <v-col cols="12" sm="6" md="4" lg="4">
-              <v-select v-model="ordreTri" :items="optionsDeTri" item-title="titre" item-value="valeur" label="Trier par :" variant="solo" hide-details rounded="lg" prepend-inner-icon="mdi-sort-variant"></v-select>
-            </v-col>
-            <v-col cols="12" sm="6" md="3" lg="2" class="text-right">
-              <v-btn color="blue-grey-darken-2" variant="tonal" prepend-icon="mdi-archive" size="large" rounded="lg" block @click="dialogueArchivesOuvert = true">
-                ARCHIVES
-              </v-btn>
-            </v-col>
-          </v-row>
+          
+          <BarreDeFiltres 
+            v-model:recherche="recherche"
+            v-model:ordreTri="ordreTri"
+            :options-de-tri="optionsDeTri"
+            @ouvrir-archives="dialogueArchivesOuvert = true"
+          />
 
           <div v-if="chargement" class="text-center pa-10">
             <v-progress-circular indeterminate color="teal" size="64"></v-progress-circular>
@@ -245,8 +136,9 @@ onMounted(() => {
           <div v-else-if="medicamentsFiltres.length > 0">
             <MedicamentItem 
               v-for="m in medicamentsFiltres" :key="m.reference" :medicament="m"
-              @incrementer="modifierStock(m, 1)" @decrementer="modifierStock(m, -1)"
-              @supprimer="supprimerMedicament(m)" @modifier="ouvrirFormulaire(m)"
+              @incrementer="modifierStock(m, 1)" 
+              @decrementer="modifierStock(m, -1)"
+              @supprimer="archiverMedicament(m)" @modifier="ouvrirFormulaire(m)"
             />
           </div>
           <v-alert v-else type="info" variant="tonal" class="mt-4" rounded="lg">Aucun résultat.</v-alert>
@@ -270,7 +162,7 @@ onMounted(() => {
         :ouvert="dialogueOuvert" 
         :medicament-edite="medicamentAEditer" 
         @fermer="dialogueOuvert = false" 
-        @sauvegarder="enregistrerMedicament" 
+        @sauvegarder="gererSauvegarde" 
       />
     </template>
 
