@@ -1,0 +1,21 @@
+<template>
+  <div style="position: fixed; bottom: 32px; left: 24px; z-index: 1000;" class="d-flex align-center">
+    <v-btn
+      icon="mdi-github"
+      color="grey-darken-4"
+      elevation="6"
+      size="large"
+      class="mr-4"
+      href="https://github.com/LuccasRN/PharmacieFrontEnd"
+      target="_blank"
+    ></v-btn>
+    <v-btn
+      icon="mdi-linkedin"
+      color="blue-darken-2"
+      elevation="6"
+      size="large"
+      href="https://www.linkedin.com/in/lucasrodriguezn/"
+      target="_blank"
+    ></v-btn>
+  </div>
+</template>
